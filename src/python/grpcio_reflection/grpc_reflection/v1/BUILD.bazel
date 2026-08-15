@@ -1,6 +1,6 @@
 load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 
-# Copyright 2021 The gRPC Authors
+# Copyright 2024 The gRPC Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,19 +36,14 @@ py_grpc_library(
 )
 
 py_library(
-    name = "grpc_reflection",
+    name = "grpc_reflection_v1",
     srcs = glob(["*.py"]),
     imports = ["../../"],
     deps = [
         ":reflection_py_pb2",
         ":reflection_py_pb2_grpc",
-        # The v1 servicer and client implementations are centralised here, so
-        # the (leaf) v1 generated messages are needed. Depending only on the
-        # v1 pb2 targets -- not the v1 py_library -- keeps the two packages
-        # free of a circular dependency.
-        "//src/python/grpcio_reflection/grpc_reflection/v1:reflection_py_pb2",
-        "//src/python/grpcio_reflection/grpc_reflection/v1:reflection_py_pb2_grpc",
         "//src/python/grpcio/grpc:grpcio",
+        "//src/python/grpcio_reflection/grpc_reflection/v1alpha:grpc_reflection",
         "@com_google_protobuf//:protobuf_python",
     ],
 )

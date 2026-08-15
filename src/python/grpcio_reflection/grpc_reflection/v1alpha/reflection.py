@@ -11,57 +11,81 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Reference implementation for reflection in gRPC Python."""
+"""Reference implementation for reflection in gRPC Python.
 
-import sys
+The servicers for both the stable ``grpc.reflection.v1`` and the legacy
+``grpc.reflection.v1alpha`` services are implemented here (the stable ones are
+re-exported from ``grpc_reflection.v1.reflection``). Centralising the
+implementations keeps the two version packages from importing each other, which
+would otherwise create a circular dependency.
+"""
 
-import grpc
+from grpc_reflection.v1 import reflection_pb2 as _v1_reflection_pb2
+from grpc_reflection.v1 import reflection_pb2_grpc as _v1_reflection_pb2_grpc
+from grpc_reflection.v1alpha import _async as aio
 from grpc_reflection.v1alpha import reflection_pb2 as _reflection_pb2
 from grpc_reflection.v1alpha import reflection_pb2_grpc as _reflection_pb2_grpc
 from grpc_reflection.v1alpha._base import BaseReflectionServicer
+from grpc_reflection.v1alpha._base import add_reflection_servicers
 
 SERVICE_NAME = _reflection_pb2.DESCRIPTOR.services_by_name[
     "ServerReflection"
 ].full_name
 
 
-class ReflectionServicer(BaseReflectionServicer):
-    """Servicer handling RPCs for service statuses."""
+class ReflectionServicer(
+    BaseReflectionServicer, _reflection_pb2_grpc.ServerReflectionServicer
+):
+    """Servicer for the legacy ``grpc.reflection.v1alpha`` service."""
+
+    def __init__(self, service_names, pool=None):
+        super().__init__(
+            service_names, pool=pool, message_module=_reflection_pb2
+        )
 
     def ServerReflectionInfo(self, request_iterator, context):
         # pylint: disable=unused-argument
         for request in request_iterator:
-            if request.HasField("file_by_filename"):
-                yield self._file_by_filename(request, request.file_by_filename)
-            elif request.HasField("file_containing_symbol"):
-                yield self._file_containing_symbol(
-                    request, request.file_containing_symbol
-                )
-            elif request.HasField("file_containing_extension"):
-                yield self._file_containing_extension(
-                    request,
-                    request.file_containing_extension.containing_type,
-                    request.file_containing_extension.extension_number,
-                )
-            elif request.HasField("all_extension_numbers_of_type"):
-                yield self._all_extension_numbers_of_type(
-                    request, request.all_extension_numbers_of_type
-                )
-            elif request.HasField("list_services"):
-                yield self._list_services(request)
-            else:
-                yield _reflection_pb2.ServerReflectionResponse(
-                    error_response=_reflection_pb2.ErrorResponse(
-                        error_code=grpc.StatusCode.INVALID_ARGUMENT.value[0],
-                        error_message=grpc.StatusCode.INVALID_ARGUMENT.value[
-                            1
-                        ].encode(),
-                    ),
-                    original_request=request,
-                )
+            yield self._handle_request(request)
+
+
+class V1ReflectionServicer(
+    BaseReflectionServicer, _v1_reflection_pb2_grpc.ServerReflectionServicer
+):
+    """Servicer for the stable ``grpc.reflection.v1`` service."""
+
+    def __init__(self, service_names, pool=None):
+        super().__init__(
+            service_names, pool=pool, message_module=_v1_reflection_pb2
+        )
+
+    def ServerReflectionInfo(self, request_iterator, context):
+        # pylint: disable=unused-argument
+        for request in request_iterator:
+            yield self._handle_request(request)
+
+
+# The stable v1 service is registered first so modern clients use it; the legacy
+# v1alpha service is registered too so older clients keep working.
+_REFLECTION_REGISTRATIONS = (
+    (
+        _v1_reflection_pb2_grpc.add_ServerReflectionServicer_to_server,
+        V1ReflectionServicer,
+        aio.V1ReflectionServicer,
+    ),
+    (
+        _reflection_pb2_grpc.add_ServerReflectionServicer_to_server,
+        ReflectionServicer,
+        aio.ReflectionServicer,
+    ),
+)
 
 
 _enable_server_reflection_doc = """Enables server reflection on a server.
+
+Both the stable ``grpc.reflection.v1`` and the legacy
+``grpc.reflection.v1alpha`` reflection services are registered, so modern
+clients use the stable service while older clients continue to work.
 
 Args:
     service_names: Iterable of fully-qualified service names available.
@@ -69,43 +93,18 @@ Args:
     pool: DescriptorPool object to use (descriptor_pool.Default() if None).
 """
 
-if sys.version_info[0] >= 3 and sys.version_info[1] >= 6:
-    # Exposes AsyncReflectionServicer as public API.
-    # pylint: disable=ungrouped-imports
-    from grpc.experimental import aio as grpc_aio
 
-    # pylint: enable=ungrouped-imports
-    from . import _async as aio
+def enable_server_reflection(service_names, server, pool=None):
+    add_reflection_servicers(
+        service_names, server, pool, _REFLECTION_REGISTRATIONS
+    )
 
-    def enable_server_reflection(service_names, server, pool=None):
-        if isinstance(server, grpc_aio.Server):
-            _reflection_pb2_grpc.add_ServerReflectionServicer_to_server(
-                aio.ReflectionServicer(service_names, pool=pool), server
-            )
-        else:
-            _reflection_pb2_grpc.add_ServerReflectionServicer_to_server(
-                ReflectionServicer(service_names, pool=pool), server
-            )
 
-    enable_server_reflection.__doc__ = _enable_server_reflection_doc
+enable_server_reflection.__doc__ = _enable_server_reflection_doc
 
-    __all__ = [
-        "SERVICE_NAME",
-        "ReflectionServicer",
-        "aio",
-        "enable_server_reflection",
-    ]
-else:
-
-    def enable_server_reflection(service_names, server, pool=None):
-        _reflection_pb2_grpc.add_ServerReflectionServicer_to_server(
-            ReflectionServicer(service_names, pool=pool), server
-        )
-
-    enable_server_reflection.__doc__ = _enable_server_reflection_doc
-
-    __all__ = [
-        "SERVICE_NAME",
-        "ReflectionServicer",
-        "enable_server_reflection",
-    ]
+__all__ = [
+    "SERVICE_NAME",
+    "ReflectionServicer",
+    "aio",
+    "enable_server_reflection",
+]

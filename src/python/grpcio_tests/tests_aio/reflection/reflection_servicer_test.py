@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests of grpc_reflection.v1alpha.reflection."""
+"""Tests of grpc_reflection.v1 and grpc_reflection.v1alpha reflection."""
 
 import logging
 import unittest
@@ -19,9 +19,14 @@ import unittest
 from google.protobuf import descriptor_pb2
 import grpc
 from grpc.experimental import aio
-from grpc_reflection.v1alpha import reflection
-from grpc_reflection.v1alpha import reflection_pb2
-from grpc_reflection.v1alpha import reflection_pb2_grpc
+from grpc_reflection.v1 import reflection as reflection_v1
+from grpc_reflection.v1 import reflection_pb2 as reflection_v1_pb2
+from grpc_reflection.v1 import reflection_pb2_grpc as reflection_v1_pb2_grpc
+from grpc_reflection.v1alpha import (
+    reflection_pb2_grpc as reflection_v1alpha_pb2_grpc,
+)
+from grpc_reflection.v1alpha import reflection as reflection_v1alpha
+from grpc_reflection.v1alpha import reflection_pb2 as reflection_v1alpha_pb2
 
 from src.proto.grpc.testing import empty_pb2
 from src.proto.grpc.testing.proto2 import empty2_extensions_pb2
@@ -55,21 +60,37 @@ def _file_descriptor_to_proto(descriptor):
     return proto.SerializeToString()
 
 
-class ReflectionServicerTest(AioTestBase):
+class _ReflectionServicerTestMixin:
+    """Shared async reflection servicer tests.
+
+    ``enable_server_reflection`` registers both the stable v1 and the legacy
+    v1alpha services; subclasses bind the version-specific modules to exercise
+    each through its own stub.
+    """
+
+    # Set by subclasses.
+    reflection = None
+    reflection_pb2 = None
+    reflection_pb2_grpc = None
+    expected_service_name = None
+
     async def setUp(self):
         self._server = aio.server()
-        reflection.enable_server_reflection(_SERVICE_NAMES, self._server)
+        self.reflection.enable_server_reflection(_SERVICE_NAMES, self._server)
         port = self._server.add_insecure_port("[::]:0")
         await self._server.start()
 
         self._channel = aio.insecure_channel("localhost:%d" % port)
-        self._stub = reflection_pb2_grpc.ServerReflectionStub(self._channel)
+        self._stub = self.reflection_pb2_grpc.ServerReflectionStub(
+            self._channel
+        )
 
     async def tearDown(self):
         await self._server.stop(None)
         await self._channel.close()
 
     async def test_file_by_name(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 file_by_filename=_EMPTY_PROTO_FILE_NAME
@@ -103,6 +124,7 @@ class ReflectionServicerTest(AioTestBase):
         self.assertSequenceEqual(expected_responses, responses)
 
     async def test_file_by_symbol(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 file_containing_symbol=_EMPTY_PROTO_SYMBOL_NAME
@@ -136,6 +158,7 @@ class ReflectionServicerTest(AioTestBase):
         self.assertSequenceEqual(expected_responses, responses)
 
     async def test_file_containing_extension(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 file_containing_extension=reflection_pb2.ExtensionRequest(
@@ -178,6 +201,7 @@ class ReflectionServicerTest(AioTestBase):
         self.assertSequenceEqual(expected_responses, responses)
 
     async def test_extension_numbers_of_type(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 all_extension_numbers_of_type=_EMPTY_EXTENSIONS_SYMBOL_NAME
@@ -210,6 +234,7 @@ class ReflectionServicerTest(AioTestBase):
         self.assertSequenceEqual(expected_responses, responses)
 
     async def test_list_services(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 list_services="",
@@ -234,8 +259,22 @@ class ReflectionServicerTest(AioTestBase):
 
     def test_reflection_service_name(self):
         self.assertEqual(
-            reflection.SERVICE_NAME, "grpc.reflection.v1alpha.ServerReflection"
+            self.reflection.SERVICE_NAME, self.expected_service_name
         )
+
+
+class ReflectionServicerV1AlphaTest(_ReflectionServicerTestMixin, AioTestBase):
+    reflection = reflection_v1alpha
+    reflection_pb2 = reflection_v1alpha_pb2
+    reflection_pb2_grpc = reflection_v1alpha_pb2_grpc
+    expected_service_name = "grpc.reflection.v1alpha.ServerReflection"
+
+
+class ReflectionServicerV1Test(_ReflectionServicerTestMixin, AioTestBase):
+    reflection = reflection_v1
+    reflection_pb2 = reflection_v1_pb2
+    reflection_pb2_grpc = reflection_v1_pb2_grpc
+    expected_service_name = "grpc.reflection.v1.ServerReflection"
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ ROOT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
 GRPC_ROOT_ABS_PATH = os.path.join(ROOT_DIR, "../../..")
 ROOT_REL_DIR = os.path.relpath(ROOT_DIR, start=GRPC_ROOT_ABS_PATH)
 REFLECTION_PROTO = "src/proto/grpc/reflection/v1alpha/reflection.proto"
+REFLECTION_PROTO_V1 = "src/proto/grpc/reflection/v1/reflection.proto"
 LICENSE = "./LICENSE"
 
 
@@ -45,6 +46,13 @@ class Preprocess(setuptools.Command):
                 REFLECTION_PROTO,
                 os.path.join(
                     ROOT_REL_DIR, "grpc_reflection/v1alpha/reflection.proto"
+                ),
+            )
+        if os.path.isfile(REFLECTION_PROTO_V1):
+            shutil.copyfile(
+                REFLECTION_PROTO_V1,
+                os.path.join(
+                    ROOT_REL_DIR, "grpc_reflection/v1/reflection.proto"
                 ),
             )
         if os.path.isfile(LICENSE):

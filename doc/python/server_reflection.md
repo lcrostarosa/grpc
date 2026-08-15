@@ -49,6 +49,12 @@ is working properly by using the [`grpc_cli` command line tool]:
   please refer to the [`grpc_cli` documentation] and the
   [C++ Server Reflection Tutorial].
 
+`enable_server_reflection` registers both the stable `grpc.reflection.v1` and
+the legacy `grpc.reflection.v1alpha` reflection services, so modern clients
+(such as recent `grpcurl` and `grpc_cli` versions) use the stable service while
+older clients continue to work. The same behavior is available under the stable
+package name via `from grpc_reflection.v1 import reflection`.
+
 
 ## Use Server Reflection in a Python client
 
@@ -59,7 +65,9 @@ which implements the
 [DescriptorDatabase](https://googleapis.dev/python/protobuf/latest/google/protobuf/descriptor_database.html#google.protobuf.descriptor_database.DescriptorDatabase)
 interface. It manages the communication between clients and reflection services
 and the storage of received information. Clients can use it as using a local
-descriptor database.
+descriptor database. It prefers the stable `grpc.reflection.v1` service and
+transparently falls back to `grpc.reflection.v1alpha` when the server does not
+implement v1.
 
 - To use Server Reflection with ProtoReflectionDescriptorDatabase, first
   initialize an instance with a channel.
