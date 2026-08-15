@@ -26,6 +26,7 @@ py_test(
         "//src/proto/grpc/testing/proto2:empty2_extensions_proto",
         "//src/proto/grpc/testing/proto2:empty2_proto",
         "//src/python/grpcio/grpc:grpcio",
+        "//src/python/grpcio_reflection/grpc_reflection/v1:grpc_reflection_v1",
         "//src/python/grpcio_reflection/grpc_reflection/v1alpha:grpc_reflection",
         "//src/python/grpcio_tests/tests_aio/unit:_test_base",
     ],

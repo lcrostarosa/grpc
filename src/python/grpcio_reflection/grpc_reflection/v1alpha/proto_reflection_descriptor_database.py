@@ -23,14 +23,25 @@ from typing import Any, Dict, Iterable, List, Set
 from google.protobuf.descriptor_database import DescriptorDatabase
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 import grpc
-from grpc_reflection.v1alpha.reflection_pb2 import ExtensionNumberResponse
-from grpc_reflection.v1alpha.reflection_pb2 import ExtensionRequest
-from grpc_reflection.v1alpha.reflection_pb2 import FileDescriptorResponse
-from grpc_reflection.v1alpha.reflection_pb2 import ListServiceResponse
-from grpc_reflection.v1alpha.reflection_pb2 import ServerReflectionRequest
-from grpc_reflection.v1alpha.reflection_pb2 import ServerReflectionResponse
-from grpc_reflection.v1alpha.reflection_pb2 import ServiceResponse
-from grpc_reflection.v1alpha.reflection_pb2_grpc import ServerReflectionStub
+
+# The client prefers the stable ``grpc.reflection.v1`` service and falls back to
+# the legacy ``grpc.reflection.v1alpha`` service if the server does not
+# implement v1. The two protos are field-identical, so the v1 message types are
+# used for construction and type hints; requests are transparently converted to
+# v1alpha (a wire-compatible re-serialization) on fallback.
+from grpc_reflection.v1 import reflection_pb2 as _v1_reflection_pb2
+from grpc_reflection.v1 import reflection_pb2_grpc as _v1_reflection_pb2_grpc
+from grpc_reflection.v1.reflection_pb2 import ExtensionNumberResponse
+from grpc_reflection.v1.reflection_pb2 import ExtensionRequest
+from grpc_reflection.v1.reflection_pb2 import FileDescriptorResponse
+from grpc_reflection.v1.reflection_pb2 import ListServiceResponse
+from grpc_reflection.v1.reflection_pb2 import ServerReflectionRequest
+from grpc_reflection.v1.reflection_pb2 import ServerReflectionResponse
+from grpc_reflection.v1.reflection_pb2 import ServiceResponse
+from grpc_reflection.v1alpha import (
+    reflection_pb2_grpc as _v1alpha_reflection_pb2_grpc,
+)
+from grpc_reflection.v1alpha import reflection_pb2 as _v1alpha_reflection_pb2
 
 
 class ProtoReflectionDescriptorDatabase(DescriptorDatabase):
@@ -53,7 +64,13 @@ class ProtoReflectionDescriptorDatabase(DescriptorDatabase):
     def __init__(self, channel: grpc.Channel):
         DescriptorDatabase.__init__(self)
         self._logger = logging.getLogger(__name__)
-        self._stub = ServerReflectionStub(channel)
+        # Prefer the stable v1 service; fall back to v1alpha on UNIMPLEMENTED.
+        self._v1_stub = _v1_reflection_pb2_grpc.ServerReflectionStub(channel)
+        self._v1alpha_stub = _v1alpha_reflection_pb2_grpc.ServerReflectionStub(
+            channel
+        )
+        self._stub = self._v1_stub
+        self._using_v1 = True
         self._known_files: Set[str] = set()
         self._cached_extension_numbers: Dict[str, List[int]] = {}
 
@@ -198,11 +215,41 @@ class ProtoReflectionDescriptorDatabase(DescriptorDatabase):
             extendee_name, extension_number
         )
 
+    @staticmethod
+    def _as_v1alpha_request(
+        request: ServerReflectionRequest,
+    ) -> "_v1alpha_reflection_pb2.ServerReflectionRequest":
+        # v1 and v1alpha requests are wire-identical, so re-serialization is a
+        # safe conversion.
+        v1alpha_request = _v1alpha_reflection_pb2.ServerReflectionRequest()
+        v1alpha_request.ParseFromString(request.SerializeToString())
+        return v1alpha_request
+
     def _do_one_request(
         self, request: ServerReflectionRequest, key: Any
     ) -> ServerReflectionResponse:
-        response = self._stub.ServerReflectionInfo(iter([request]))
-        res = next(response)
+        try:
+            outgoing = (
+                request if self._using_v1 else self._as_v1alpha_request(request)
+            )
+            response = self._stub.ServerReflectionInfo(iter([outgoing]))
+            res = next(response)
+        except grpc.RpcError as e:
+            if self._using_v1 and e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                # Server does not implement grpc.reflection.v1; fall back to the
+                # legacy v1alpha service and retry for this and all future calls.
+                self._logger.info(
+                    "Server does not implement grpc.reflection.v1; "
+                    "falling back to grpc.reflection.v1alpha."
+                )
+                self._using_v1 = False
+                self._stub = self._v1alpha_stub
+                response = self._stub.ServerReflectionInfo(
+                    iter([self._as_v1alpha_request(request)])
+                )
+                res = next(response)
+            else:
+                raise
         if res.WhichOneof("message_response") == "error_response":
             # Only NOT_FOUND errors are expected at this layer
             error_code = res.error_response.error_code

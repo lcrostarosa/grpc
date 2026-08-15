@@ -11,16 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests of grpc_reflection.v1alpha.reflection."""
+"""Tests of grpc_reflection.v1 and grpc_reflection.v1alpha reflection."""
 
 import unittest
 
 from google.protobuf import descriptor_pb2
-from google.protobuf import descriptor_pool
 import grpc
-from grpc_reflection.v1alpha import reflection
-from grpc_reflection.v1alpha import reflection_pb2
-from grpc_reflection.v1alpha import reflection_pb2_grpc
+from grpc_reflection.v1 import reflection as reflection_v1
+from grpc_reflection.v1 import reflection_pb2 as reflection_v1_pb2
+from grpc_reflection.v1 import reflection_pb2_grpc as reflection_v1_pb2_grpc
+from grpc_reflection.v1alpha import (
+    reflection_pb2_grpc as reflection_v1alpha_pb2_grpc,
+)
+from grpc_reflection.v1alpha import reflection as reflection_v1alpha
+from grpc_reflection.v1alpha import reflection_pb2 as reflection_v1alpha_pb2
 
 from src.proto.grpc.testing import empty_pb2
 from src.proto.grpc.testing.proto2 import empty2_extensions_pb2
@@ -54,21 +58,38 @@ def _file_descriptor_to_proto(descriptor):
     return proto.SerializeToString()
 
 
-class ReflectionServicerTest(unittest.TestCase):
+class _ReflectionServicerTestMixin:
+    """Shared reflection servicer tests.
+
+    ``enable_server_reflection`` registers both the stable v1 and the legacy
+    v1alpha services, so the same server is exercised through each version's
+    stub. Subclasses bind the version-specific modules.
+    """
+
+    # Set by subclasses.
+    reflection = None
+    reflection_pb2 = None
+    reflection_pb2_grpc = None
+    expected_service_name = None
+
     def setUp(self):
         self._server = test_common.test_server()
-        reflection.enable_server_reflection(_SERVICE_NAMES, self._server)
+        # Registers both v1 and v1alpha regardless of which module is used.
+        self.reflection.enable_server_reflection(_SERVICE_NAMES, self._server)
         port = self._server.add_insecure_port("[::]:0")
         self._server.start()
 
         self._channel = grpc.insecure_channel("localhost:%d" % port)
-        self._stub = reflection_pb2_grpc.ServerReflectionStub(self._channel)
+        self._stub = self.reflection_pb2_grpc.ServerReflectionStub(
+            self._channel
+        )
 
     def tearDown(self):
         self._server.stop(None)
         self._channel.close()
 
     def testFileByName(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 file_by_filename=_EMPTY_PROTO_FILE_NAME
@@ -100,6 +121,7 @@ class ReflectionServicerTest(unittest.TestCase):
         self.assertEqual(expected_responses, responses)
 
     def testFileBySymbol(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 file_containing_symbol=_EMPTY_PROTO_SYMBOL_NAME
@@ -131,6 +153,7 @@ class ReflectionServicerTest(unittest.TestCase):
         self.assertEqual(expected_responses, responses)
 
     def testFileContainingExtension(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 file_containing_extension=reflection_pb2.ExtensionRequest(
@@ -171,6 +194,7 @@ class ReflectionServicerTest(unittest.TestCase):
         self.assertEqual(expected_responses, responses)
 
     def testExtensionNumbersOfType(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 all_extension_numbers_of_type=_EMPTY_EXTENSIONS_SYMBOL_NAME
@@ -201,6 +225,7 @@ class ReflectionServicerTest(unittest.TestCase):
         self.assertEqual(expected_responses, responses)
 
     def testListServices(self):
+        reflection_pb2 = self.reflection_pb2
         requests = (
             reflection_pb2.ServerReflectionRequest(
                 list_services="",
@@ -223,8 +248,24 @@ class ReflectionServicerTest(unittest.TestCase):
 
     def testReflectionServiceName(self):
         self.assertEqual(
-            reflection.SERVICE_NAME, "grpc.reflection.v1alpha.ServerReflection"
+            self.reflection.SERVICE_NAME, self.expected_service_name
         )
+
+
+class ReflectionServicerV1AlphaTest(
+    _ReflectionServicerTestMixin, unittest.TestCase
+):
+    reflection = reflection_v1alpha
+    reflection_pb2 = reflection_v1alpha_pb2
+    reflection_pb2_grpc = reflection_v1alpha_pb2_grpc
+    expected_service_name = "grpc.reflection.v1alpha.ServerReflection"
+
+
+class ReflectionServicerV1Test(_ReflectionServicerTestMixin, unittest.TestCase):
+    reflection = reflection_v1
+    reflection_pb2 = reflection_v1_pb2
+    reflection_pb2_grpc = reflection_v1_pb2_grpc
+    expected_service_name = "grpc.reflection.v1.ServerReflection"
 
 
 if __name__ == "__main__":

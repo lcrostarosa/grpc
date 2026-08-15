@@ -18,6 +18,7 @@ import unittest
 from google.protobuf.descriptor_pool import DescriptorPool
 import grpc
 from grpc_reflection.v1alpha import reflection
+from grpc_reflection.v1alpha import reflection_pb2_grpc as v1alpha_pb2_grpc
 from grpc_reflection.v1alpha.proto_reflection_descriptor_database import (
     ProtoReflectionDescriptorDatabase,
 )
@@ -60,6 +61,12 @@ class ReflectionClientTest(unittest.TestCase):
     def testListServices(self):
         services = self._reflection_db.get_services()
         self.assertCountEqual(self._SERVICE_NAMES, services)
+
+    def testClientPrefersV1(self):
+        # The server registers both v1 and v1alpha, so the client should use
+        # the stable v1 service and never fall back.
+        self._reflection_db.get_services()
+        self.assertTrue(self._reflection_db._using_v1)
 
     def testReflectionServiceName(self):
         self.assertEqual(
@@ -146,6 +153,41 @@ class ReflectionClientTest(unittest.TestCase):
         self.assertEqual(0, len(extension_field_descs))
         with self.assertRaises(KeyError):
             self.desc_pool.FindExtensionByName(message_name)
+
+
+class ReflectionClientV1AlphaFallbackTest(unittest.TestCase):
+    """The client falls back to v1alpha against a server that lacks v1."""
+
+    def setUp(self):
+        self._server = test_common.test_server()
+        self._SERVICE_NAMES = (
+            test_pb2.DESCRIPTOR.services_by_name["TestService"].full_name,
+        )
+        # Register ONLY the legacy v1alpha servicer, simulating an older server.
+        v1alpha_pb2_grpc.add_ServerReflectionServicer_to_server(
+            reflection.ReflectionServicer(self._SERVICE_NAMES), self._server
+        )
+        port = self._server.add_insecure_port("[::]:0")
+        self._server.start()
+
+        self._channel = grpc.insecure_channel("localhost:%d" % port)
+        self._reflection_db = ProtoReflectionDescriptorDatabase(self._channel)
+        self.desc_pool = DescriptorPool(self._reflection_db)
+
+    def tearDown(self):
+        self._server.stop(None)
+        self._channel.close()
+
+    def testFallsBackToV1Alpha(self):
+        services = self._reflection_db.get_services()
+        self.assertCountEqual(self._SERVICE_NAMES, services)
+        self.assertFalse(self._reflection_db._using_v1)
+
+    def testFindFileAfterFallback(self):
+        file_desc = self.desc_pool.FindFileByName(_PROTO_FILE_NAME)
+        self.assertEqual(_PROTO_FILE_NAME, file_desc.name)
+        self.assertIn("TestService", file_desc.services_by_name)
+        self.assertFalse(self._reflection_db._using_v1)
 
 
 if __name__ == "__main__":
